@@ -10,7 +10,7 @@ import org.bouncycastle.util.encoders.Hex;
 import java.io.File;
 import java.util.Arrays;
 
-public class HelloController {
+public class CryptoController {
     public Label fileNameLabel;
     public Button buttonEncrypt;
     public ProgressBar progressBar;
@@ -38,13 +38,17 @@ public class HelloController {
     }
 
     public void onEncryptButtonClick(ActionEvent actionEvent) {
+        processCryptoEvent(true);
+    }
+
+    private void processCryptoEvent(boolean isEncrypt) {
         if (sourceFile == null) {
             sourceFile = chooseFile();
             if (sourceFile != null) {
-                fileNameLabel.setText(String.format("Encrypt: %s", sourceFile.getName()));
-                System.out.printf("Encrypt: %s\n", sourceFile);
+                fileNameLabel.setText(String.format("Source: %s", sourceFile.getName()));
             } else {
                 System.out.println("No file selected.");
+                cleanAll();
                 return;
             }
         }
@@ -63,27 +67,30 @@ public class HelloController {
                 ivBytes = Arrays.copyOfRange(kdf_data, 16, 32);
                 System.out.printf("key: %s\n", Hex.toHexString(keyBytes));
                 System.out.printf("iv : %s\n", Hex.toHexString(ivBytes));
-
             } catch (Exception e) {
                 System.out.println(e.getMessage());
+                cleanAll();
                 return;
             }
 
         } else {
+            cleanAll();
             return;
         }
 
-        var destFilename = String.format("%s.%s.enc",
-                sourceFile.getName(),
-                Hex.toHexString(Arrays.copyOfRange(ivBytes, 0, 4)));
-        System.out.printf("dest filename: %s\n", destFilename);
+        var destFilename = isEncrypt ? getEncryptDestinationFilename(ivBytes) : getDecryptDestinationFilename(ivBytes);
+
+        if(destFilename == null || destFilename.length() == 0) {
+            return;
+        }
 
         var saveFile = saveFile(destFilename);
         if (saveFile != null) {
-            fileNameLabel.setText(String.format("Encrypt: %s", saveFile));
-            System.out.printf("Encrypt to save: %s\n", saveFile);
+            fileNameLabel.setText(String.format("Destination: %s", saveFile));
+            System.out.printf("Destination: %s\n", saveFile);
         } else {
             System.out.println("No file selected.");
+            cleanAll();
             return;
         }
 
@@ -92,12 +99,12 @@ public class HelloController {
             processor.setFile(sourceFile, saveFile);
             processor.setOnSucceeded(wse -> {
                 System.out.println("worker done.");
-                sourceFile = null;
-                fileNameLabel.setText("worker done.");
+                cleanAll();
+                fileNameLabel.setText("All done.");
                 progressBar.progressProperty().unbind();
                 progressBar.setProgress(0);
             });
-            processor.setOnFailed(wse -> wse.getSource().getException().printStackTrace());
+            //processor.setOnFailed(wse -> wse.getSource().getException().printStackTrace());
             progressBar.progressProperty().unbind();
             progressBar.progressProperty().bind(processor.progressProperty());
             var worker = new Thread(processor);
@@ -107,8 +114,17 @@ public class HelloController {
             worker.start();
         } catch (Exception e) {
             System.out.println(e.getMessage());
-            throw new RuntimeException(e);
+            cleanAll();
+            //throw new RuntimeException(e);
         }
+    }
+
+    private String getEncryptDestinationFilename(byte[] ivBytes) {
+        var destFilename = String.format("%s.%s.enc",
+                sourceFile.getName(),
+                Hex.toHexString(Arrays.copyOfRange(ivBytes, 0, 4)));
+        System.out.printf("Destination filename: %s\n", destFilename);
+        return destFilename;
     }
 
     private File saveFile(String destFilename) {
@@ -121,46 +137,15 @@ public class HelloController {
 
     private File chooseFile() {
         var fileChooser = new FileChooser();
-        fileChooser.setTitle("Select file to encrypt");
+        fileChooser.setTitle("Select file to open");
         return fileChooser.showOpenDialog(fileNameLabel.getScene().getWindow());
     }
 
     public void onDecryptButtonClick(ActionEvent actionEvent) {
-        if (sourceFile == null) {
-            sourceFile = chooseFile();
-            if (sourceFile != null) {
-                fileNameLabel.setText(String.format("Source: %s", sourceFile.getName()));
-                System.out.printf("Source: %s\n", sourceFile);
-            } else {
-                System.out.println("No file selected.");
-                cleanAll();
-                return;
-            }
-        }
+        processCryptoEvent(false);
+    }
 
-        byte[] keyBytes;
-        byte[] ivBytes;
-
-        var passwordDialog = new PasswordDialog();
-        var result = passwordDialog.showAndWait();
-        if (result.isPresent()) {
-            System.out.printf("password: %s\n", result.get());
-            try {
-                var kdf_data = CryptoUtil.kdf_scrypt(result.get().toCharArray());
-                System.out.printf("kdf: %s\n", Hex.toHexString(kdf_data));
-                keyBytes = Arrays.copyOfRange(kdf_data, 0, 16);
-                ivBytes = Arrays.copyOfRange(kdf_data, 16, 32);
-                System.out.printf("key: %s\n", Hex.toHexString(keyBytes));
-                System.out.printf("iv : %s\n", Hex.toHexString(ivBytes));
-            } catch (Exception e) {
-                System.out.println(e.getMessage());
-                cleanAll();
-                return;
-            }
-        } else {
-            return;
-        }
-
+    private String getDecryptDestinationFilename(byte[] ivBytes) {
         var sourceFilename = sourceFile.getName();
         var filenameParts = sourceFilename.split("\\.");
 
@@ -178,7 +163,7 @@ public class HelloController {
             } else {
                 System.out.println("user choose to cancel.");
                 cleanAll();
-                return;
+                return null;
             }
             destFilename = sourceFilename + ".dec";
         } else {
@@ -198,43 +183,11 @@ public class HelloController {
             } else {
                 System.out.println("user choose to cancel.");
                 cleanAll();
-                return;
+                return null;
             }
         }
-
         System.out.printf("dest filename: %s\n", destFilename);
-
-        var saveFile = saveFile(destFilename);
-        if (saveFile != null) {
-            fileNameLabel.setText(String.format("Encrypt: %s", saveFile));
-            System.out.printf("Encrypt to save: %s\n", saveFile);
-        } else {
-            System.out.println("No file selected.");
-            return;
-        }
-
-        try {
-            var processor = new FileProcessor(keyBytes, ivBytes);
-            processor.setFile(sourceFile, saveFile);
-            processor.setOnSucceeded(wse -> {
-                System.out.println("worker done.");
-                sourceFile = null;
-                fileNameLabel.setText("worker done.");
-                progressBar.progressProperty().unbind();
-                progressBar.setProgress(0);
-            });
-            processor.setOnFailed(wse -> wse.getSource().getException().printStackTrace());
-            progressBar.progressProperty().unbind();
-            progressBar.progressProperty().bind(processor.progressProperty());
-            var worker = new Thread(processor);
-            Thread.UncaughtExceptionHandler handler = (t, e) -> System.out.println(e.getMessage());
-            worker.setUncaughtExceptionHandler(handler);
-            worker.setDaemon(true);
-            worker.start();
-        } catch (Exception e) {
-            System.out.println(e.getMessage());
-            throw new RuntimeException(e);
-        }
+        return destFilename;
     }
 
     private void cleanAll() {
